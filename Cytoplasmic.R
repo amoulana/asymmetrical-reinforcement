@@ -1,5 +1,7 @@
 library(parallel)
 
+#We defne a couple of cuntions. Calc.x functions calculate the frequency of allele x in the population
+#of interest.
 calc.A <- function(pop){
   return(pop[1]+pop[5]+(pop[2]+pop[3]+pop[6]+pop[7])/2)
 }
@@ -16,32 +18,50 @@ calc.c <- function(pop){
   return(sum(pop[5:8]))
 }
 
+#Assuming Hardy-Weinberg, then we define a function
+#to calculate the genotype frequency based on allele freq
 random.mating <- function(A,a,C,c){
   local.ad <- c(A^2,A*a,A*a,a^2,A^2,A*a,A*a,a^2)
   return(c(C,C,C,C,c,c,c,c)*local.ad)
 }
 
-#CAA,CAa,CaA,Caa,cAA,cAa,caA,caa
-#CAABB,CAaBB,CaaBB,... (32)
+#The sequence of genotype in a vector: without B allele-- CAA,CAa,CaA,Caa,cAA,cAa,caA,caa
+#when there's B allele-- CAABB,CAaBB,CaaBB,... (32)
+
+#First, the selection function (before the intro of B allele).
+#pop1 and pop2: the genotype freq vector in pop 1 and pop 2
+#sel 1 and 2: selection coefficient for allele C/c being in the other population. Enter a NUMERIC
+#sel.comp: selection VECTOR due to incompatibility of certain A/a genotypes being in a certain pop (local adaptation)
 selection <- function(pop1,pop2,sel1,sel2,sel.comp){
   sel1 <- c(0,0,0,0,sel1,sel1,sel1,sel1)
-  sel2 <- c(sel2,sel2,sel2,sel2,00,0,0)
+  sel2 <- c(sel2,sel2,sel2,sel2,0,0,0,0)
   s1Avg <- sum((1-sel1)*(1-sel.comp)*pop1)
   s2Avg <- sum((1-sel2)*(1-sel.comp)*pop2)
   pop1s <- (1-sel1)*(1-sel.comp)*pop1/s1Avg
   pop2s <- (1-sel2)*(1-sel.comp)*pop2/s2Avg
+  
+  #return a list of two VECTORS: pop1 and pop2 after selection
   return(list(pop1s,pop2s))
 }
 
+#migration function with input pop1, pop2, and NUMERICAL m12 and m21 which are mig coeffs
+#migration coeffs are constant across genotypes in a population
 migration<- function(pop1, pop2,m12,m21){
+  #calculate the sum of freqs in the populations after migration.
+  #m12: mig from pop 1 to pop2, and vice cersa
+  #after migration the freq in pop1 = freq staying * pop1 + freq coming * pop2
   sum1m <- sum(pop1*(1-m12) + pop2*m21)
   sum2m <- sum(pop1*m12 + pop2*(1-m21))
+  
+  #normalize all resulting freqs by the sum
   pop1m <- (pop1*(1-m12) + pop2*m21)/sum1m
   pop2m <- (pop1*m12 + pop2*(1-m21))/sum2m
   return(list(pop1m,pop2m))
 }
 
+#mating fuction with input pop1 and pop2
 mating<-function(pop1,pop2){
+  #calculate allele freqs
   A1 <- calc.A(pop1)
   a1 <- calc.a(pop1)
   A2 <- calc.A(pop2)
@@ -50,49 +70,72 @@ mating<-function(pop1,pop2){
   c1 <- calc.c(pop1)
   C2 <- calc.C(pop2)
   c2 <- calc.c(pop2)
+  
+  #apply random mating functions to get after-mating freqs of pop1 and pop2
   pop1t <- random.mating(A1,a1,C1,c1)
   pop2t <- random.mating(A2,a2,C2,c2)
   return(list(pop1t,pop2t))
 }
 
+#sum-up function with input pop1, pop2 being the initial geno freqs before selection
 generation<-function(pop1,pop2,sel1,sel2,sel.comp,m12,m21){
   selected <- selection(pop1,pop2,sel1,sel2,sel.comp)
-  mig <- migration(selected[[1]],selected[[2]],m12,m21);
-  mat <- mating(mig[[1]],mig[[2]]);
+  mig <- migration(selected[[1]],selected[[2]],m12,m21)
+  mat <- mating(mig[[1]],mig[[2]])
+  
+  #calculate change in allele A freqs
   delta.A1 <- calc.A(mat[[1]])-calc.A(pop1)
   delta.A2 <- calc.A(mat[[2]])-calc.A(pop2)
   A1 <- calc.A(mat[[1]])
   A2 <- calc.A(mat[[2]])
+  
+  #return a list of the resulting geno freq, change, and final allele freq
   return(list(mat, delta.A1, delta.A2, A1, A2))
 }
 
+#a function that runs function GENERATION up until an equilibrium
 equilibrium<-function(pop1,pop2,sel1,sel2,sel.comp,m12,m21){
   pop1x <- pop1
   pop2x <- pop2
+  #calculate change in allele A freq
   arraydp <- generation(pop1x,pop2x,sel1,sel2,sel.comp,m12,m21)[[3]];
+  
+  #continue if change 
   if(arraydp > 0.00001){
     vec.x <- generation(pop1x,pop2x,sel1,sel2,sel.comp,m12,m21)[[1]]
     equilibrium(vec.x[[1]],vec.x[[2]],sel1,sel2,sel.comp,m12,m21)
   }
+  
+  #stop and return if no change
   else{
     return(generation(pop1x,pop2x,sel1,sel2,sel.comp,m12,m21)[[4]])
   }
 }
 
+#A similar function to selection, but now we have genos1 and genos2
+#These VECTORS are similar to pop1 and pop2, but have length of 32 instead of 8, adding the B allele
+#other inputs are similar
 selectionAfter<-function(genos1, genos2, sel1, sel2, sel.comp){
+  #for each B/b genotype, find the sum of the freqs stored in avg1 and avg2 
   avg1 <- c(sum(genos1[1:8])/sum(genos1),sum(genos1[9:16])/sum(genos1),
             sum(genos1[17:24])/sum(genos1),sum(genos1[25:232])/sum(genos1))
   avg2 <- c(sum(genos2[1:8])/sum(genos2),sum(genos2[9:16])/sum(genos2),
             sum(genos2[17:24])/sum(genos2),sum(genos2[25:232])/sum(genos2))
+  #perform SELECTION function on each of B/b genotype. 
+  #Note that since selection is independent of B/b alleles,
+  #we can separate this function into all four possible B/b genotypes, and operate the function on each
   genos.BB <- selection(genos1[1:8],genos2[1:8],sel1,sel2,sel.comp)
   genos.Bb <- selection(genos1[9:16],genos2[9:16],sel1,sel2,sel.comp)
   genos.bB <- selection(genos1[17:24],genos2[17:24],sel1,sel2,sel.comp)
   genos.bb <- selection(genos1[25:32],genos2[25:32],sel1,sel2,sel.comp)
+  
+  #reconvene and normalize the freqs by the sum of freqs initially for each B/b genotype
   genos1.s <- c(genos.BB[1]/avg1[1],genos.Bb[1]/avg1[2],genos.bB[1]/avg1[2],genos.bb[1]/avg1[3])
   genos2.s <- c(genos.BB[2]/avg2[1],genos.Bb[2]/avg2[2],genos.bB[2]/avg2[2],genos.bb[2]/avg2[3])
   return(list(genos1.s, genos2.s))
 }
 
+#migration is really similar to the previous function, since m12 and m21 are independent of the genos
 migrationAfter<-function(genos1, genos2, m12, m21){
   genos1mig <- genos1*(1-m12)+genos2*m21
   genos2mig <- genos2*(1-m21)+genos1*m12

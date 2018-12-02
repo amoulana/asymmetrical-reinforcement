@@ -30,8 +30,10 @@ random.mating <- function(A,a,C,c){
 
 #First, the selection function (before the intro of B allele).
 #pop1 and pop2: the genotype freq vector in pop 1 and pop 2
-#sel 1 and 2: selection coefficient for allele C/c being in the other population. Enter a NUMERIC
-#sel.comp: selection VECTOR due to incompatibility of certain A/a genotypes being in a certain pop (local adaptation)
+#sel 1 and 2: selection coefficient for allele C/c being in the other population (local adaptation).
+#Enter a NUMERIC
+#sel.comp: selection VECTOR due to incompatibility between cytoplasmic and nuclear allele. This must
+#be in the form c(0,w,w,x,y,z,z,0)
 selection <- function(pop1,pop2,sel1,sel2,sel.comp){
   sel1 <- c(0,0,0,0,sel1,sel1,sel1,sel1)
   sel2 <- c(sel2,sel2,sel2,sel2,0,0,0,0)
@@ -99,7 +101,6 @@ equilibrium<-function(pop1,pop2,sel1,sel2,sel.comp,m12,m21){
   pop2x <- pop2
   #calculate change in allele A freq
   arraydp <- generation(pop1x,pop2x,sel1,sel2,sel.comp,m12,m21)[[3]];
-  
   #continue if change 
   if(arraydp > 0.00001){
     vec.x <- generation(pop1x,pop2x,sel1,sel2,sel.comp,m12,m21)[[1]]
@@ -108,7 +109,7 @@ equilibrium<-function(pop1,pop2,sel1,sel2,sel.comp,m12,m21){
   
   #stop and return if no change
   else{
-    return(generation(pop1x,pop2x,sel1,sel2,sel.comp,m12,m21)[[4]])
+    return(generation(pop1x,pop2x,sel1,sel2,sel.comp,m12,m21))
   }
 }
 
@@ -128,10 +129,12 @@ selectionAfter<-function(genos1, genos2, sel1, sel2, sel.comp){
   genos.Bb <- selection(genos1[9:16],genos2[9:16],sel1,sel2,sel.comp)
   genos.bB <- selection(genos1[17:24],genos2[17:24],sel1,sel2,sel.comp)
   genos.bb <- selection(genos1[25:32],genos2[25:32],sel1,sel2,sel.comp)
-  
+
   #reconvene and normalize the freqs by the sum of freqs initially for each B/b genotype
-  genos1.s <- c(genos.BB[1]/avg1[1],genos.Bb[1]/avg1[2],genos.bB[1]/avg1[2],genos.bb[1]/avg1[3])
-  genos2.s <- c(genos.BB[2]/avg2[1],genos.Bb[2]/avg2[2],genos.bB[2]/avg2[2],genos.bb[2]/avg2[3])
+  genos1.s <- c(genos.BB[[1]]/avg1[[1]],genos.Bb[[1]]/avg1[[2]],
+                genos.bB[[1]]/avg1[[2]],genos.bb[[1]]/avg1[[3]])
+  genos2.s <- c(genos.BB[[2]]/avg2[[1]],genos.Bb[[2]]/avg2[[2]],
+                genos.bB[[2]]/avg2[[2]],genos.bb[[2]]/avg2[[3]])
   return(list(genos1.s, genos2.s))
 }
 
@@ -146,8 +149,13 @@ migrationAfter<-function(genos1, genos2, m12, m21){
   return(list(genos1m, genos2m))
 }
 
+#create a function that calculates the frequency of certain gametes after recombination.
+#gametes: AB, Ab, aB, ab
+#input geno denotes genotype of interest: 1=AABB, 2=AABb, etc. up until 16. r = recombination coeff
+#This repeats twice up until 32 due to C/c allele addition.
 gametes<-function(geno,r){
   arrayg<-rep(0,4)
+  #Ignore C/c alleles for gamete production
   geno<-geno %% 16
   if(geno==1){arrayg<-c(1., 0., 0., 0.)}
   else if(geno==2){arrayg<-c(0.5, 0.5, 0., 0.)} 
@@ -168,24 +176,33 @@ gametes<-function(geno,r){
   return(arrayg)
 }
 
+#mating result given the genos (genotype freqs), genof (type of genotype for female), genom (male)
+#adv is a VECTOR that gives the frequency of mating when the BB genof mates (with mating preference)
 matingResult<-function(genos, genof, genom, adv, r){
+  #set freq mating to normal
   coefficient <- c(1., 1., 1., 1.)
   genof <- genof %% 16
   genom <- genom %% 16
   ifelse(genof==0,genof<-16,genof<-genof)
   ifelse(genom==0,genom<-16,genom<-genof)
+  
+  #change freq mating (coefficient) to adv when genof=___BB
   if(genof == 1 | genof == 5 | genof == 9 | genof == 13){ 
     coefficient <- adv;
   }
+  
+  #calculate frequency of mating now:
   if(genom < 5) {maleAallele <- 1} 
   else if(genom < 9){maleAallele <- 2} 
   else if(genom < 13){maleAallele <- 3}
   else{maleAallele <- 4};
-  
   freqMating <- genos[genof]*genos[genom]*coefficient[maleAallele];
+  
+  #calculate gamete frequency for male and female
   gametef <- gametes(genof, r);
   gametem <- gametes(genom, r);
   
+  #calculate the resulting genotype of the mating
   arraym <- freqMating*c(gametef[1]*gametem[1], 
                          gametef[1]*gametem[2], gametef[2]*gametem[1], 
                          gametef[2]*gametem[2], gametef[1]*gametem[3], 
@@ -198,7 +215,7 @@ matingResult<-function(genos, genof, genom, adv, r){
   return(arraym)
 }
 
-
+#the ACTUAL mating function
 matingAfter<-function(genos1, genos2, d1, d2, r, model, cost){
   #The following calculates the coefficient of mating. 
   #Only when the female genotype has BB is this coefficient used; 
@@ -234,6 +251,8 @@ matingAfter<-function(genos1, genos2, d1, d2, r, model, cost){
     )
   }
   
+  #ALWAYS use model 1 where BB prefers AA not aa (as in model 2)
+  #adv gies the relative mating frequency for each A/a genotype. incorporate cost as well
   if(model == 1){
     adv1 <- c((1 + d1)*(1 - cost)/sumM1(genos1), 
               (1 + d2)*(1 - cost)/sumM1(genos1), 
@@ -256,8 +275,8 @@ matingAfter<-function(genos1, genos2, d1, d2, r, model, cost){
   }
   #There are 32x32 possible matings and we calculate the genotype
   #frequencies resulted from each mating then sum up all results for
-  #post-mating genotype frequencies. Somehow, 
-  #double sum does not work on Mathematica*)
+  #post-mating genotype frequencies. C mothers produce C offsprings and c mothers produce c offsprings
+  #due to maternal inhertiance
   
   X.C <- c(1:16)
   X.c <- c(17:32)
@@ -268,6 +287,8 @@ matingAfter<-function(genos1, genos2, d1, d2, r, model, cost){
   newgenos2.C <- rep(0,16)
   newgenos2.c <- rep(0,16)
   
+  #i is for genof, j for genom. Calculate this for C genotypes. Sum all over possible genof/genom.
+  #Note that C genotypes can only come from C mothers
   for(i in X.C){
     for(j in Y){
       newgenos1.C <- newgenos1.C + matingResult(genos1,i,j,adv1,r)
@@ -275,6 +296,7 @@ matingAfter<-function(genos1, genos2, d1, d2, r, model, cost){
     }
   }
   
+  #Now for c
   for(i in X.c){
     for(j in Y){
       newgenos1.c <- newgenos1.c + matingResult(genos1,i,j,adv1,r)
@@ -282,11 +304,13 @@ matingAfter<-function(genos1, genos2, d1, d2, r, model, cost){
     }
   }
   
+  #combine between the two
   newgenos1 <- c(newgenos1.C,newgenos1.c)
   newgenos2 <- c(newgenos2.C,newgenos2.c)
   return(list(newgenos1, newgenos2))
 }
 
+#combine all functions
 generationAfter<-function(genos1, genos2, m12, m21, sel1, sel2, sel.comp, cost, d1, d2, r, model){
   genos1s <- selectionAfter(genos1, genos2, sel1, sel2, sel.comp)[[1]]
   genos2s <- selectionAfter(genos1, genos2, sel1, sel2, sel.comp)[[2]]
@@ -295,8 +319,10 @@ generationAfter<-function(genos1, genos2, m12, m21, sel1, sel2, sel.comp, cost, 
   return(matingAfter(genos1m, genos2m, d1, d2, r, model, cost))
 }
 
+#create a function to calculate B allele freq.
 B.Allele<- function(genos1x){ 
   return(
+    #some +16 to account for c genotypes
     genos1x[1] + genos1x[5] + genos1x[9] + genos1x[13] + genos1x[2]/2 + 
       genos1x[3]/2 + genos1x[6]/2 + genos1x[7]/2 + genos1x[10]/2 + 
       genos1x[11]/2 + genos1x[14]/2 + genos1x[15]/2+
@@ -305,3 +331,125 @@ B.Allele<- function(genos1x){
       genos1x[11+16]/2 + genos1x[14+16]/2 + genos1x[15+16]/2
   )
 }
+
+#create a function to combine the initial model (up until requilibirum), introduce B allele, and run
+#simulation up until N generations
+after<-function(m12, m21, sel1, sel2, sel.comp, cost, d1, d2, r, b,model,background,N){
+  
+  #find equilibrium freqs.
+  pop1.init <- c(1, 0, 0, 0, 0, 0, 0, 0)
+  pop2.init <- c(0, 0, 0, 0, 0, 0, 0, 1)
+  eq.list<-equilibrium(pop1.init,pop2.init,sel1,sel2,sel.comp,m12,m21)
+  pops.eq <- eq.list[[1]]
+  pop1.eq.before <- pops.eq[[1]]
+  pop2.eq.before <- pops.eq[[2]]
+  
+  #expand vector to 32-element
+  pop1.eq <- rep(pop1.eq.before,each=4)
+  pop2.eq <- rep(pop2.eq.before,each=4)
+  
+  #genos1 is a vector representing the initial equilibrial
+  #frequency of genotypes in population 1 after the introduction of
+  #alleles B.
+  
+  b.intros <- rep(c(b^2,b*(1-b),b*(1-b),(1-b)^2),8)
+  
+  if(background == 1){ 
+    genos1.eq <- pop1.eq * b.intros
+    genos2.eq <- pop2.eq
+  }
+  else{
+    genos1.eq <- pop1.eq 
+    genos2.eq <- pop2.eq * b.intros
+  }
+  
+  #create a function that calculates the change in allele B frequency (not necessary, but just in case)
+  nestHelp<-function(genos1x, genos2x){
+    pop1Binit<-B.Allele(genos1x);
+    pop2Binit<-B.Allele(genos2x);
+    newGenos1<- generationAfter(genos1x, genos2x, m12, m21, 
+                                sel1, sel2, sel.comp, cost, d1, d2, r, model)[[1]] 
+    newGenos2 <- generationAfter(genos1x, genos2x, m12, m21, 
+                                 sel1, sel2, sel.comp, cost, d1, d2, r, model)[[2]]
+    dB1 <- abs(pop1Binit - B.Allele(newGenos1))
+    dB2 <- abs(pop2Binit - B.Allele(newGenos2))
+    return(list(newGenos1, newGenos2, dB1, dB2))
+  }
+  
+  #run the simulation up until certain N generations
+  N.gen <- 1
+  #initialize change in allele B freq to be greater than 0 first
+  db1<-1
+  db2<-1
+  if(calc.A(pop1.eq.before) != 0 & calc.A(pop2.eq.before) != 0){
+    #CHANGE LIL LIMIT LATER!!
+    while((N.gen<N) & (db1 > 0) & (db2 > 0)){
+      result <- nestHelp(genos1.eq,genos2.eq)
+      genos1.eq <- result[[1]]
+      genos2.eq <- result[[2]]
+      db1 <- result[[3]]
+      db2 <- result[[4]]
+      N.gen <- N.gen+1
+    }
+  }
+  
+  #calculate frequencies of alleles A and B in pop 1 and 
+  A1 <- 0
+  A2 <- 0
+  B1 <- 0
+  B2 <- 0
+  for(i in 1:8){
+    A1 <- A1 + genos1.eq[i] + genos1.eq[4+i]/2 + genos1.eq[8+i]/2
+    A2 <- A2 + genos2.eq[i] + genos2.eq[4+i]/2 + genos2.eq[8+i]/2
+    B1 <- B1 + genos1.eq[4*(i-1)+1] + genos1.eq[4*(i-1)+2]/2 + genos1.eq[4*(i-1)+3]/2
+    B2 <- B2 + genos2.eq[4*(i-1)+1] + genos2.eq[4*(i-1)+2]/2 + genos2.eq[4*(i-1)+3]/2
+  }
+  
+  #return all the params
+  return(c(m12,m21,d1,cost,
+           sel1,sel2,
+           sel.comp[2],sel.comp[3],sel.comp[4],sel.comp[5],
+           calc.A(pop1.eq.before),calc.A(pop2.eq.before),
+           A1,A2,B1,B2,N.gen))
+}
+
+#create a function to run multiple simulations simultaneously with an input of a vector length 10
+coreAfter <- function(i){
+  sim.m12 <- i[1]
+  sim.m21 <- i[2]
+  sim.sel1 <- i[3]
+  sim.sel2 <- i[4]
+  sim.sel.comp <- c(0,i[5],i[5],i[6],i[7],i[8],i[8],0)
+  sim.d <- i[9]
+  sim.r <- i[10]
+  sim.cost <- i[11]
+  return(after(sim.m12,sim.m21,sim.sel1, sim.sel2, sim.sel.comp, sim.cost,sim.d,0,sim.r,0.01,1,1,100))
+}
+
+#create all possible combinations of params (in this model there are 10!)
+seq.m12 <- seq(0.1,0.1,0.0)
+seq.m21 <- seq(0.1,0.1,0.0)
+seq.sel1 <- seq(0.1,0.1,0.0)
+seq.sel2 <- seq(0.1,0.1,0.0)
+seq.sel.comp1 <- seq(0.1,0.1,0.0)
+seq.sel.comp2 <- seq(0.1,0.1,0.0)
+seq.sel.comp3 <- seq(0.1,0.1,0.0)
+seq.sel.comp4 <- seq(0.1,0.1,0.0)
+seq.d <- seq(0.1,0.1,0.0)
+seq.r <- seq(0.1,0.1,0.0)
+seq.cost <- seq(0.1,0.1,0.0)
+sim.list.0 <- expand.grid(seq.m12,seq.m21,seq.sel1,seq.sel2,
+                        seq.sel.comp1,seq.sel.comp2,seq.sel.comp3,seq.sel.comp4,
+                        seq.d,seq.r,seq.cost)
+sim.list <- as.list(as.data.frame(t(sim.list.0)))
+
+#run multiple simulations
+results <- mclapply(sim.list, coreAfter, mc.cores = 1)
+results.df <- as.data.frame(do.call(rbind, results))
+colnames(results.df) <- c('m_12','m_21','d','cost',
+                          's_c1','s_C2',
+                          's_CAa','s_Caa','s_cAA','s_cAa',
+                          'A1_eq','A2_eq',
+                          'A1_fin','A2_fin','B1_fin','B2_fin','numb_gen')
+write.table(results.df, file = "Asymmetric_migration_cytoplasmic.txt", sep = "\t",
+            row.names = FALSE)
